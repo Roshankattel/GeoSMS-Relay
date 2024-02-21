@@ -1,12 +1,16 @@
 #ifndef MAIN_H
 #define MAIN_H
 
+#define TINY_GSM_RX_BUFFER 2048 // Set RX buffer to 2Kb
+#include <ArduinoJson.h>
 #include "httpReq.h"
 
 // Set serial for AT commands (to SIM module)
 #define SerialAT Serial1
 
-#ifdef DUMP_AT_COMMANDS // if enabled it requires the streamDebugger lib
+// Define the serial console for debug prints, if needed
+// #define DUMP_AT_COMMANDS
+#ifdef DUMP_AT_COMMANDS
 #include <StreamDebugger.h>
 StreamDebugger debugger(SerialAT, Serial);
 TinyGsm modem(debugger);
@@ -22,11 +26,7 @@ struct SmsData
     uint64_t msgId;
 };
 
-SmsData receivedData;
-
 QueueHandle_t smsDataQueue;
 uint64_t msgCount = 0;
-uint64_t lastReceivedTime = 0;
-bool sendData = false;
 
 #endif

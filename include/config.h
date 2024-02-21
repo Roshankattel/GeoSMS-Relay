@@ -1,30 +1,37 @@
 #ifndef CONFIG_H
 #define CONFIG_H
+#include <Arduino.h>
 
-#define MAX_QUEUE_LENGTH 16
+#define MAX_QUEUE_LENGTH 10
 
-#define MODEM_BAUDRATE (115200)
-#define MODEM_DTR_PIN (25)
-#define MODEM_TX_PIN (26)
-#define MODEM_RX_PIN (27)
-// The modem boot pin needs to follow the startup sequence.
-#define BOARD_PWRKEY_PIN (4)
-#define BOARD_ADC_PIN (35)
-// The modem power switch must be set to HIGH for the modem to supply power.
-#define BOARD_POWERON_PIN (12)
-#define MODEM_RING_PIN (33)
-#define MODEM_RESET_PIN (5)
-#define BOARD_MISO_PIN (2)
-#define BOARD_MOSI_PIN (15)
-#define BOARD_SCK_PIN (14)
-#define BOARD_SD_CS_PIN (13)
-#define BOARD_BAT_ADC_PIN (35)
-#define MODEM_RESET_LEVEL HIGH
-#define SerialAT Serial1
+// A7670 pins Modem pins
+#define MODEM_RST 5
+#define MODEM_PWRKEY 4
+#define MODEM_TX 26
+#define MODEM_RX 27
+#define DEBUG 1
 
-#define MODEM_GPS_ENABLE_GPIO (-1)
+#if DEBUG == 1
+#define debug(x) Serial.print(x)
+#define debugln(x) Serial.println(x)
+#else
+#define debug(x)
+#define debugln(x)
+#endif
 
-// See all AT commands, if wanted
-// #define DUMP_AT_COMMANDS
+// SIM card PIN (leave empty, if not defined)
+const char simPIN[] = "";
+
+// Your GPRS credentials, if any
+
+const char apn[] = "web";
+// const char apn[] = "jawalnet.com.sa";
+const char gprsUser[] = "";
+const char gprsPass[] = "";
+
+// Server details
+const char server[] = "172.206.216.191";
+const char resource[] = "/sms";
+const int port = 3000;
 
 #endif

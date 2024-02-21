@@ -1,181 +1,100 @@
 
 #include "main.h"
+#include <ArduinoHttpClient.h>
 
-void readIncomingMessage();
+bool httpRequest(String &httpRequestData);
+bool networkSetup(void);
+void readIncomingMessage(void);
+
+void procSmsMsgTask(void *parameter)
+{
+  SmsData receivedData;
+  for (;;)
+  {
+    if (xQueueReceive(smsDataQueue, &receivedData, pdMS_TO_TICKS(100)) == pdTRUE)
+    {
+      // debugln("\nReceived message::");
+      // debugln(receivedData.msgId);
+      // debugln(receivedData.sender);
+      // debugln(receivedData.timestamp);
+      // debugln(receivedData.message);
+
+      JsonDocument doc;
+      doc["msgId"] = receivedData.msgId;
+      doc["sender"] = receivedData.sender;
+      doc["timestamp"] = receivedData.timestamp;
+      doc["message"] = receivedData.message;
+
+      String httpRequestData;
+      httpRequestData.reserve(2048);
+      serializeJson(doc, httpRequestData);
+      if (modem.isGprsConnected())
+        httpRequest(httpRequestData);
+      else
+        debugln(F("[ERROR] GPRS Disconnected, Cannot make request!"));
+    }
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
 
 void setup()
 {
-  Serial.begin(115200); // Set console baud rate
+#if DEBUG == 1
+  Serial.begin(115200);
+#endif
+
+  // Set modem reset, enable, power pins
+  pinMode(MODEM_RST, OUTPUT);
+  digitalWrite(MODEM_RST, LOW);
+  delay(100);
+  digitalWrite(MODEM_RST, HIGH);
+  delay(2600);
+  digitalWrite(MODEM_RST, LOW);
+  pinMode(MODEM_PWRKEY, OUTPUT);
+  digitalWrite(MODEM_PWRKEY, LOW);
+  delay(100);
+  digitalWrite(MODEM_PWRKEY, HIGH);
+  delay(100);
+  digitalWrite(MODEM_PWRKEY, LOW);
+
+  // Set GSM module baud rate and UART pins
+  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
+  delay(2000);
 
   // Create Queue
   smsDataQueue = xQueueCreate(MAX_QUEUE_LENGTH, sizeof(SmsData));
 
-  Serial.println("Start Sketch");
+  xTaskCreate(procSmsMsgTask,
+              "HTTPSMsg",
+              4096 * 4,
+              nullptr,
+              1,
+              nullptr);
 
-  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
+  // Restart SIMA7670 module, it takes quite some time
+  // To skip it, call init() instead of restart()
+  debugln(F("\n\n[STEP::1]Initializing modem..."));
+  modem.restart();
 
-#ifdef BOARD_POWERON_PIN
-  pinMode(BOARD_POWERON_PIN, OUTPUT);
-  digitalWrite(BOARD_POWERON_PIN, HIGH);
-#endif
-
-  // Set modem reset pin ,reset modem
-  pinMode(MODEM_RESET_PIN, OUTPUT);
-  digitalWrite(MODEM_RESET_PIN, !MODEM_RESET_LEVEL);
-  delay(100);
-  digitalWrite(MODEM_RESET_PIN, MODEM_RESET_LEVEL);
-  delay(2600);
-  digitalWrite(MODEM_RESET_PIN, !MODEM_RESET_LEVEL);
-
-  pinMode(BOARD_PWRKEY_PIN, OUTPUT);
-  digitalWrite(BOARD_PWRKEY_PIN, LOW);
-  delay(100);
-  digitalWrite(BOARD_PWRKEY_PIN, HIGH);
-  delay(100);
-  digitalWrite(BOARD_PWRKEY_PIN, LOW);
-
-  // Check if the modem is online
-  Serial.println("Start modem...");
-
-  int retry = 0;
-  while (!modem.testAT(1000))
+  // Unlock your SIM card with a PIN if needed
+  if (strlen(simPIN) && modem.getSimStatus() != 3)
   {
-    Serial.println(".");
-    if (retry++ > 10)
-    {
-      digitalWrite(BOARD_PWRKEY_PIN, LOW);
-      delay(100);
-      digitalWrite(BOARD_PWRKEY_PIN, HIGH);
-      delay(1000);
-      digitalWrite(BOARD_PWRKEY_PIN, LOW);
-      retry = 0;
-    }
+    modem.simUnlock(simPIN);
   }
-  Serial.println();
-
-  // Check if SIM card is online
-  SimStatus sim = SIM_ERROR;
-  while (sim != SIM_READY)
-  {
-    sim = modem.getSimStatus();
-    switch (sim)
-    {
-    case SIM_READY:
-      Serial.println("SIM card online");
-      break;
-    case SIM_LOCKED:
-      Serial.println("The SIM card is locked. Please unlock the SIM card first.");
-      // const char *SIMCARD_PIN_CODE = "123456";
-      // modem.simUnlock(SIMCARD_PIN_CODE);
-      break;
-    default:
-      break;
-    }
-    delay(1000);
-  }
-
-  if (!modem.setNetworkMode(MODEM_NETWORK_AUTO))
-  {
-    Serial.println("Set network mode failed!");
-  }
-  String mode = modem.getNetworkModes();
-  Serial.print("Current network mode : ");
-  Serial.println(mode);
-
-  // Check network registration status and network signal status
-  int16_t sq;
-  Serial.println("Wait for the modem to register with the network.");
-  RegStatus status = REG_NO_RESULT;
-  while (status == REG_NO_RESULT || status == REG_SEARCHING || status == REG_UNREGISTERED)
-  {
-    status = modem.getRegistrationStatus();
-    switch (status)
-    {
-    case REG_UNREGISTERED:
-    case REG_SEARCHING:
-      sq = modem.getSignalQuality();
-      Serial.printf("[%lu] Signal Quality:%d ", millis() / 1000, sq);
-      delay(1000);
-      break;
-    case REG_DENIED:
-      Serial.println("Network registration was rejected, please check if the APN is correct");
-      return;
-    case REG_OK_HOME:
-      Serial.println("Online registration successful");
-      break;
-    case REG_OK_ROAMING:
-      Serial.println("Network registration successful, currently in roaming mode");
-      break;
-    default:
-      Serial.printf("Registration Status:%d\n", status);
-      delay(1000);
-      break;
-    }
-  }
-  Serial.println();
-
-  Serial.printf("Registration Status:%d\n", status);
-  delay(1000);
-
-  String ueInfo;
-  if (modem.getSystemInformation(ueInfo))
-  {
-    Serial.print("Inquiring UE system information:");
-    Serial.println(ueInfo);
-  }
-
-  if (!modem.enableNetwork())
-  {
-    Serial.println("Enable network failed!");
-  }
-
-  delay(5000);
-
-  String ipAddress = modem.getLocalIP();
-  Serial.print("Network IP:");
-  Serial.println(ipAddress);
-
   SerialAT.println("AT+CMGF=1"); // Configuring TEXT mode
   delay(200);
   SerialAT.println("AT+CNMI=2,2,0,0,0"); // Decides how newly arrived SMS messages should be handled
   delay(200);
   SerialAT.println("AT+CMGD=,4"); // Clearing all the existing messages
   delay(200);
-  Serial.println("Waiting for SMS ...");
+  networkSetup();
+  debugln(F("[STEP::5]Waiting for SMS message..."));
 }
 
 void loop()
 {
-  // Serial.print AT
   readIncomingMessage();
-  if (millis() - lastReceivedTime > 1000)
-    sendData = true;
-
-  if (sendData)
-  {
-    if ((xQueueReceive(smsDataQueue, &receivedData, pdMS_TO_TICKS(200)) == pdTRUE))
-    {
-      // Serial.println("\n[Received::]");
-      // Serial.print("Message Id:");
-      // Serial.println(receivedData.msgId);
-      // Serial.print("Sender:");
-      // Serial.println(receivedData.sender);
-      // Serial.print("Timestamp:");
-      // Serial.println(receivedData.timestamp);
-      // Serial.print("Message:");
-      // Serial.println(receivedData.message);
-      String httpRequestData =
-          "{\"msgId\":" + String(receivedData.msgId) +
-          ",\"sender\":\"" + String(receivedData.sender) +
-          "\",\"timestamp\":\"" + String(receivedData.timestamp) +
-          "\",\"message\":\"" + String(receivedData.message) +
-          "\"}";
-      if (!httpRequest(httpRequestData))
-        Serial.println("[ERROR] GPRS Disconnected, Cannot make request!");
-    }
-    else
-      sendData = false;
-  }
+  vTaskDelay(pdMS_TO_TICKS(50));
 }
 
 void readIncomingMessage()
@@ -184,7 +103,7 @@ void readIncomingMessage()
     return;
 
   String response = SerialAT.readStringUntil('\n');
-  // Serial.println(response);
+  // debugln(response);
 
   if (!response.startsWith("+CMT:"))
     return;
@@ -217,12 +136,54 @@ void readIncomingMessage()
 
   String text = SerialAT.readStringUntil('\n');
   text.trim();
-  // Serial.println(text);
+  debugln(text);
 
   strcpy(data.message, text.c_str());
-  lastReceivedTime = millis();
   if (xQueueSend(smsDataQueue, &data, portMAX_DELAY) != pdTRUE)
   {
-    Serial.println("Failed to send to queue");
+    debugln("Failed to send to queue");
   }
+}
+
+bool networkSetup()
+{
+  bool ret;
+  ret = modem.setNetworkMode(MODEM_NETWORK_AUTO);
+  if (modem.waitResponse(10000L) != 1)
+  {
+    debugln("setNetworkMode faill");
+    return false;
+  }
+
+  debug("[STEP::2]Waiting for network...");
+  if (!modem.waitForNetwork())
+  {
+    debugln(" fail");
+    delay(10000);
+    return false;
+  }
+  debug(" success");
+
+  if (modem.isNetworkConnected())
+  {
+    debugln(F(" Network connected"));
+  }
+  debug(F("[STEP::3]Connecting to "));
+  debug(apn);
+  if (!modem.gprsConnect(apn, gprsUser, gprsPass))
+  {
+    debugln(" fail");
+    delay(10000);
+    return false;
+  }
+  debugln(F(" success"));
+
+  if (!modem.isGprsConnected())
+  {
+    delay(10000);
+    return false;
+  }
+
+  debugln(F("[STEP::4]GPRS connected"));
+  return true;
 }
